@@ -63,7 +63,12 @@ async fn remove_readonly_permission_from_folder(
     // フォルダ内のファイルに対して権限削除
     for file in files {
         let id = file.id.clone().unwrap();
-        remove_readonly_permission_from_file(&permission_methods, &id).await?;
+        remove_readonly_permission_from_file(&permission_methods, &id)
+            .await
+            .map_err(|e| {
+                println!("Error: {}", e);
+                e
+            })?;
 
         // ファイルがフォルダの場合、再帰的に権限削除
         if file.mime_type == Some("application/vnd.google-apps.folder".to_string()) {
