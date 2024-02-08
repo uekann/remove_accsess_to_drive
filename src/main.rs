@@ -1,9 +1,69 @@
 extern crate google_drive3 as drive3;
+use async_recursion::async_recursion;
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
-// use drive3::chrono::naive::serde::serde_from;
+use drive3::hyper::client::HttpConnector;
+use drive3::hyper_rustls::HttpsConnector;
 use drive3::{chrono, hyper, hyper_rustls, oauth2, DriveHub, FieldMask};
 use drive3::{Error, Result}; // Add this line to import the base64 crate
 use tokio;
+
+async fn remove_readonly_permission_from_file(
+    hub: &DriveHub<HttpsConnector<HttpConnector>>,
+    file_id: &str,
+) -> Result<()> {
+    // ファイルの権限を全て取得
+    let permissions = hub
+        .permissions()
+        .list(file_id)
+        .add_scope(drive3::api::Scope::Full)
+        .doit()
+        .await?
+        .1
+        .permissions
+        .unwrap_or_default();
+
+    // roleがreaderの権限を削除
+    for permission in permissions {
+        if permission.role == Some("reader".to_string()) {
+            hub.permissions()
+                .delete(file_id, &permission.id.unwrap())
+                .add_scope(drive3::api::Scope::Full)
+                .doit()
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+#[async_recursion]
+async fn remove_readonly_permission_from_folder(
+    hub: &DriveHub<HttpsConnector<HttpConnector>>,
+    folder_id: &str,
+) -> Result<()> {
+    // フォルダ内のファイルを全て取得
+    let files = hub
+        .files()
+        .list()
+        .add_scope(drive3::api::Scope::Full)
+        .q(&format!("'{}' in parents", folder_id))
+        .doit()
+        .await?
+        .1
+        .files
+        .unwrap_or_default();
+
+    // フォルダ内のファイルに対して権限削除
+    for file in files {
+        let id = file.id.clone().unwrap();
+        remove_readonly_permission_from_file(hub, &id).await?;
+
+        // ファイルがフォルダの場合、再帰的に権限削除
+        if file.mime_type == Some("application/vnd.google-apps.folder".to_string()) {
+            remove_readonly_permission_from_folder(hub, &id).await?;
+        }
+    }
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() {
@@ -40,31 +100,7 @@ async fn main() {
     let root_folder_id =
         std::env::var("GOOGLE_DRIVE_FOLDER_ID").expect("GOOGLE_DRIVE_FOLDER_ID is not set");
 
-    let permissions = hub
-        .permissions()
-        .list(&root_folder_id)
-        .add_scope(drive3::api::Scope::Full)
-        .doit()
+    remove_readonly_permission_from_folder(&hub, &root_folder_id)
         .await
-        .expect("Failed to list permissions")
-        .1
-        .permissions
-        .unwrap_or_default();
-
-    for permission in permissions {
-        let id = permission.id.unwrap_or_default();
-        let role = permission.role.unwrap_or_default();
-        let display_name = hub
-            .permissions()
-            .get(&root_folder_id, &id)
-            .param("fields", "displayName")
-            .doit()
-            .await
-            .expect("Failed to get permission")
-            .1
-            .display_name
-            .unwrap_or("anyone".to_string());
-
-        println!("role: {}, display_name: {}", role, display_name);
-    }
+        .unwrap();
 }
