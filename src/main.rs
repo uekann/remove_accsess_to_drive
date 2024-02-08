@@ -22,11 +22,19 @@ async fn remove_readonly_permission_from_file(
         .permissions
         .unwrap_or_default();
 
-    // roleがreaderの権限を削除
+    // typeがanyoneの権限を削除
     for permission in permissions {
-        if permission.role == Some("reader".to_string()) {
+        let type_ = permission_methods
+            .get(file_id, permission.id.as_ref().unwrap())
+            .add_scope(drive3::api::Scope::Full)
+            .doit()
+            .await?
+            .1
+            .type_;
+
+        if type_ == Some("anyone".to_string()) {
             permission_methods
-                .delete(file_id, &permission.id.unwrap())
+                .delete(file_id, permission.id.as_ref().unwrap())
                 .add_scope(drive3::api::Scope::Full)
                 .doit()
                 .await?;
