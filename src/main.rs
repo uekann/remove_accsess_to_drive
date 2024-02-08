@@ -64,7 +64,7 @@ async fn remove_readonly_permission_from_folder(
     for file in files {
         let id = file.id.clone().unwrap();
         let name = file.name.clone().unwrap();
-        if &name[..1] == "." {
+        if name.chars().nth(0) == Some('.') {
             continue;
         }
         remove_readonly_permission_from_file(&permission_methods, &id)
