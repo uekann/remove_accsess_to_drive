@@ -67,8 +67,8 @@ async fn remove_readonly_permission_from_folder(
 
         // ファイルがフォルダの場合、再帰的に権限削除
         if file.mime_type == Some("application/vnd.google-apps.folder".to_string()) {
+            println!("searching: {}", file.name.unwrap_or_default());
             remove_readonly_permission_from_folder(&file_methods, &permission_methods, &id).await?;
-            print!("searching: {}", file.name.unwrap_or_default());
         }
     }
     Ok(())
