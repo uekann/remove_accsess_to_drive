@@ -1,6 +1,7 @@
 extern crate google_drive3 as drive3;
 use async_recursion::async_recursion;
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
+use drive3::api::{FileListCall, FileMethods, PermissionMethods};
 use drive3::hyper::client::HttpConnector;
 use drive3::hyper_rustls::HttpsConnector;
 use drive3::{chrono, hyper, hyper_rustls, oauth2, DriveHub, FieldMask};
@@ -8,12 +9,11 @@ use drive3::{Error, Result}; // Add this line to import the base64 crate
 use tokio;
 
 async fn remove_readonly_permission_from_file(
-    hub: &DriveHub<HttpsConnector<HttpConnector>>,
+    permission_methods: &PermissionMethods<'_, HttpsConnector<HttpConnector>>,
     file_id: &str,
 ) -> Result<()> {
     // ファイルの権限を全て取得
-    let permissions = hub
-        .permissions()
+    let permissions = permission_methods
         .list(file_id)
         .add_scope(drive3::api::Scope::Full)
         .doit()
@@ -25,7 +25,7 @@ async fn remove_readonly_permission_from_file(
     // roleがreaderの権限を削除
     for permission in permissions {
         if permission.role == Some("reader".to_string()) {
-            hub.permissions()
+            permission_methods
                 .delete(file_id, &permission.id.unwrap())
                 .add_scope(drive3::api::Scope::Full)
                 .doit()
@@ -37,12 +37,12 @@ async fn remove_readonly_permission_from_file(
 
 #[async_recursion]
 async fn remove_readonly_permission_from_folder(
-    hub: &DriveHub<HttpsConnector<HttpConnector>>,
+    file_methods: &FileMethods<'_, HttpsConnector<HttpConnector>>,
+    permission_methods: &PermissionMethods<'_, HttpsConnector<HttpConnector>>,
     folder_id: &str,
 ) -> Result<()> {
     // フォルダ内のファイルを全て取得
-    let files = hub
-        .files()
+    let files = file_methods
         .list()
         .add_scope(drive3::api::Scope::Full)
         .q(&format!("'{}' in parents", folder_id))
@@ -55,11 +55,12 @@ async fn remove_readonly_permission_from_folder(
     // フォルダ内のファイルに対して権限削除
     for file in files {
         let id = file.id.clone().unwrap();
-        remove_readonly_permission_from_file(hub, &id).await?;
+        remove_readonly_permission_from_file(&permission_methods, &id).await?;
 
         // ファイルがフォルダの場合、再帰的に権限削除
         if file.mime_type == Some("application/vnd.google-apps.folder".to_string()) {
-            remove_readonly_permission_from_folder(hub, &id).await?;
+            remove_readonly_permission_from_folder(&file_methods, &permission_methods, &id).await?;
+            print!("searching: {}", file.name.unwrap_or_default());
         }
     }
     Ok(())
@@ -97,10 +98,12 @@ async fn main() {
     );
 
     let hub = DriveHub::new(client, auth);
+    let file_methods = hub.files();
+    let permission_methods = hub.permissions();
     let root_folder_id =
         std::env::var("GOOGLE_DRIVE_FOLDER_ID").expect("GOOGLE_DRIVE_FOLDER_ID is not set");
 
-    remove_readonly_permission_from_folder(&hub, &root_folder_id)
+    remove_readonly_permission_from_folder(&file_methods, &permission_methods, &root_folder_id)
         .await
         .unwrap();
 }
